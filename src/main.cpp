@@ -3,10 +3,12 @@
   Project:  Yazz_NMEAtor_ESP32.cpp, Copyright 2020, Roy Wassili
   Contact:  waps61 @gmail.com
   URL:      https://www.hackster.io/waps61
-  VERSION:  0.10
+  VERSION:  0.11
   Date:     10-10-2020
   Last
   Update:   26-04-2021
+            Preparation for display implementation, compiled version and runnable
+            26-04-2021 V0.10
             First runnable MVP reading NMEA data,converting and sending NMEA0183 data
             18-04-2021 V0.02
             Fixed a bug in tthe Depth calculation
@@ -86,13 +88,13 @@ Credit:
     Include the necessary libraries
 */
 #include <HardwareSerial.h>
-
-
-
+#include <SPI.h>
+#include <SD.h>
 //*** Since the signal from the RS422-TTL converter is inverted
 //*** a digital input is used as a software serial port because
 //*** it can invert te signal back to its orignal pulse set
 #include <SoftwareSerial.h>
+#include <Nextion.h> //All other Nextion classes come with this libray
 
 /*
    Definitions go here
@@ -115,6 +117,12 @@ Credit:
 #define TALKER_RATE 38400  // Baudrate for the talker
 #define TALKER_PORT 23     // SoftSerial port 2
 
+#define NMEA_RX 22
+#define NMEA_TX 23
+#define NEXTION_RX (int8_t)3
+#define NEXTION_TX (int8_t)1
+#define NEXTION_RCV_DELAY 100
+#define NEXTION_SND_DELAY 50
 //*** Some conversion factors
 #define FTM 0.3048    // feet to meters
 #define MTF 3.28084   // meters to feet
@@ -219,6 +227,12 @@ Credit:
 */
 #define NMEA_SPECIALTY "" _DBK "" _TOB
 
+//*** define the oject tags of the Nextion display
+#define WINDDISPLAY_STATUS "status"
+#define WINDDISPLAY_STATUS_VALUE "winddisplay.status.val"
+#define WINDDISPLAY_NMEA "nmea"
+#define FIELD_BUFFER 10 //nr of char used for displaying info on Nextion
+
 //*** A structure to hold the NMEA data
 typedef struct
 {
@@ -229,6 +243,19 @@ typedef struct
 } NMEAData;
 
 char nmeaBuffer[NMEA_BUFFER_SIZE + 1] = {0};
+char nb_AWA[FIELD_BUFFER] = {0};
+char nb_COG[FIELD_BUFFER] = {0};
+char nb_SOG[FIELD_BUFFER] = {0};
+char nb_AWS[FIELD_BUFFER] = {0};
+char nb_BAT[FIELD_BUFFER] = {0};
+char nb_DPT[FIELD_BUFFER] = {0};
+char nb_DIR[FIELD_BUFFER] = {0};
+char nb_TWS[FIELD_BUFFER] = {0};
+char nb_STW[FIELD_BUFFER] = {0};
+char nb_HDG[FIELD_BUFFER] = {0};
+char nb_LOG[FIELD_BUFFER] = {0};
+char nb_WTR[FIELD_BUFFER] = {0};
+char oldVal[255] = {0}; // holds previos _BITVALUE to check if we need to send
 
 enum NMEAReceiveStatus
 {
@@ -242,6 +269,13 @@ enum NMEAReceiveStatus
 byte nmeaStatus = INVALID;
 byte nmeaIndex = 0;
 bool nmeaDataReady = false;
+bool newData = false;
+unsigned long tmr1 = 0;
+
+//*** Global scope variable declaration goes here
+NexPicture dispStatus = NexPicture(1, 35, WINDDISPLAY_STATUS);
+NexText nmeaTxt = NexText(1, 16, WINDDISPLAY_NMEA);
+NexText versionTxt = NexText(0, 3, "version");
 
 SoftwareSerial nmeaSerialOut; //(52,TALKER_PORT,true); // signal need to be inverted for RS-232
 
@@ -408,13 +442,10 @@ button_info menu_button[4] =
 unsigned long Timer2 = 1000000; //500000L;                         // 500mS loop ... used when sending data to to Processing
 unsigned long Stop2 = 0;
 
-
 bool on = true;
 byte pin = 22;
 
 String mpuNMEAString = "";
-
-
 
 /*
   * Setting for Serial interrupt
@@ -422,6 +453,19 @@ String mpuNMEAString = "";
 //*** flag data on the listener port is ready
 volatile bool listenerDataReady = false;
 
+/*** function check if a string is a number
+*/
+boolean isNumeric(char *value)
+{
+  boolean result = true;
+  int i = 0;
+  while (value[i] != '\0' && result && i < FIELD_BUFFER)
+  {
+    result = (isDigit(value[i]) || value[i] == '.' || value[i] == '-');
+    i++;
+  }
+  return result;
+}
 //*** ISR to set listerDataReady flag
 void listenerReady()
 {
@@ -960,6 +1004,114 @@ void initializeTalker()
 #endif
 }
 
+/*** Converts and adjusts the incomming values to usable values for the HMI display 
+ * and concatenates these values in one string so it can be send in one command to the 
+ * Nextion HMI in timed intervals of 50ms.
+ * This is due the fact that a timer in the HMI checks on new data and refreshes the 
+ * display. So no need to send more data than you can chew!
+ * A refresh of 20x per second is more then sufficient.
+ * The string is formatted like:
+ * <Sentence ID1>=<Value1>#....<Sentence IDn>=<Value_n>#
+ * Sentence ID = 3 chars i.e. SOG, COG etc
+ * Value can be an integer or float with 1 decimal and max 5 char long incl. delimiter
+ * i.e. SOG=6.4#COG=213.2#BAT=12.5#AWA=37#AWS=15.7#
+ * The order is not applicable, so can be random
+ */
+void displayData()
+{
+  char _BITVAL[255] = {0};
+
+  // if cog is a number
+  if (isNumeric(nb_COG))
+  {
+    strcat(_BITVAL, "COG=");
+    strcat(_BITVAL, nb_COG);
+    strcat(_BITVAL, "#");
+  }
+
+  //set awa if is a number
+  if (isNumeric(nb_AWA))
+  {
+    strcat(_BITVAL, "AWA=");
+    strcat(_BITVAL, nb_AWA);
+    strcat(_BITVAL, "#");
+  }
+
+  //set sog if is a number
+  if (isNumeric(nb_SOG))
+  {
+    strcat(_BITVAL, "SOG=");
+    strcat(_BITVAL, nb_SOG);
+    strcat(_BITVAL, "#");
+  }
+
+  // set aws is is a number
+  if (isNumeric(nb_AWS))
+  {
+    strcat(_BITVAL, "AWS=");
+    strcat(_BITVAL, nb_AWS);
+    strcat(_BITVAL, "#");
+  }
+
+  // set BATT is is a number
+  if (isNumeric(nb_BAT))
+  {
+    strcat(_BITVAL, "BAT=");
+    strcat(_BITVAL, nb_BAT);
+    strcat(_BITVAL, "#");
+  }
+  // set dpt is is a number
+  if (isNumeric(nb_DPT))
+  {
+    strcat(_BITVAL, "DPT=");
+    strcat(_BITVAL, nb_DPT);
+    strcat(_BITVAL, "#");
+  }
+  // Calculate TWS from AWA and SOG as described Starpath TrueWind by, David Burch, 2000
+  // TWS= SQRT( SOG^2*AWS^2 + (2*SOG*AWA*COS(AWA/180)))
+  double sog, awa, aws, tws = 0.0;
+  sog = atof(nb_SOG);
+  awa = atof(nb_AWA);
+  aws = atof(nb_AWS);
+  tws = sqrt(sog * sog + aws * aws - (2 * sog * aws * cos((double)awa * PI / 180)));
+  sprintf(nb_TWS, "%.1f", tws);
+  strcat(_BITVAL, "TWS=");
+  strcat(_BITVAL, nb_TWS);
+  strcat(_BITVAL, "#");
+  //*** Nextion display timer max speed is 50ms
+  // so no need to send faster than 50ms otherwise
+  // flooding the serialbuffer
+  if (millis() - tmr1 > NEXTION_SND_DELAY)
+  {
+    tmr1 = millis();
+#ifdef NEXTION_ATTACHED
+
+    if (strcmp(oldVal, _BITVAL) != 0)
+    {
+      /*
+      dbSerial.print("Preparing NMEA data: clearing buffer:");
+      sendCommand("code_c");                     // clear the previous databuffer if present
+      recvRetCommandFinished(NEXTION_RCV_DELAY); // always wait for a reply from the HMI!
+*/
+      strcpy(oldVal, _BITVAL);
+
+      /*nexSerial.print("winddisplay.nmea.txt=");
+      nexSerial.print(_BITVAL);
+      nexSerial.write(0xFF);
+      nexSerial.write(0xFF);
+      nexSerial.write(0xFF);
+      */
+      dbSerial.print("Sending NMEA data: ");
+      nmeaTxt.setText(_BITVAL);
+      dbSerial.println(_BITVAL);
+    }
+
+#endif
+
+    newData = false;
+  }
+}
+
 /*
  * Start reading converted NNMEA sentences from the stack
  * and write them to Serial Port 2 to send them to the 
@@ -1003,65 +1155,67 @@ byte startTalking()
     // speeds are checked for values <100; Higher is non existant
     if (nmeaOut.fields[0] == _RMC)
     {
-      tmpVal = nmeaOut.fields[7].toDouble();
+      memcpy(nb_SOG, nmeaOut.fields[7], FIELD_BUFFER - 1);
+
+      /* tmpVal = nmeaOut.fields[7].toDouble();
       if (tmpVal < 100)
-        update_display(tmpVal, screen_units[SPEED], "SOG", Q1);
+        update_display(tmpVal, screen_units[SPEED], "SOG", Q1); */
     }
     if (nmeaOut.fields[0] == _VHW)
     {
-      tmpVal = nmeaOut.fields[5].toDouble();
-      if (tmpVal < 100)
-        update_display(tmpVal, screen_units[SPEED], "STW", Q2);
+      memcpy(nb_STW, nmeaOut.fields[5], FIELD_BUFFER - 1);
+      // tmpVal = nmeaOut.fields[5].toDouble();
+      // if (tmpVal < 100)
+      //   update_display(tmpVal, screen_units[SPEED], "STW", Q2);
     }
     if (nmeaOut.fields[0] == _VWR)
     {
-      tmpVal = nmeaOut.fields[3].toDouble();
-      if (tmpVal < 100)
-        update_display(tmpVal, screen_units[SPEED], "AWS", Q3);
-      tmpVal = nmeaOut.fields[1].toDouble();
+      memcpy(nb_AWS, nmeaOut.fields[3], FIELD_BUFFER - 1);
+      memcpy(nb_AWA, nmeaOut.fields[1], FIELD_BUFFER - 1);
+      if (nmeaOut.fields[2] == "L")
+      {
+        //update_display(tmpVal, screen_units[DEGL], "AWA", Q4);
+        memmove(nb_AWA + 1, nb_AWA, FIELD_BUFFER - 2);
+        nb_AWA[0] = '-';
+      }
+      // tmpVal = nmeaOut.fields[3].toDouble();
+      // if (tmpVal < 100)
+      //   update_display(tmpVal, screen_units[SPEED], "AWS", Q3);
+      // tmpVal = nmeaOut.fields[1].toDouble();
       //char tmpChr[(nmeaOut.fields[2].length())];
       //(nmeaOut.fields[2]).toCharArray(tmpChr,nmeaOut.fields[2].length(),0);
-      if (tmpVal < 360 && nmeaOut.fields[2] == "R")
-        update_display(tmpVal, screen_units[DEGR], "AWA", Q4);
-      else if (tmpVal < 360 && nmeaOut.fields[2] == "L")
-        update_display(tmpVal, screen_units[DEGL], "AWA", Q4);
+      // if (tmpVal < 360 && nmeaOut.fields[2] == "R")
+      //   update_display(tmpVal, screen_units[DEGR], "AWA", Q4);
+      // else if (tmpVal < 360 && nmeaOut.fields[2] == "L")
+      //   update_display(tmpVal, screen_units[DEGL], "AWA", Q4);
     }
     break;
   case CRS:
     if (nmeaOut.fields[0] == _RMC)
     {
-      tmpVal = nmeaOut.fields[8].toDouble();
-      if (tmpVal < 360)
-        update_display(tmpVal, screen_units[DEG], "TRU", Q1);
+      memcpy(nb_COG, nmeaOut.fields[8], FIELD_BUFFER - 1);
+      // tmpVal = nmeaOut.fields[8].toDouble();
+      // if (tmpVal < 360)
+      //   update_display(tmpVal, screen_units[DEG], "TRU", Q1);
     }
     if (nmeaOut.fields[0] == _hDG)
     {
-      tmpVal = nmeaOut.fields[1].toDouble();
-      if (tmpVal < 360)
-        update_display(tmpVal, screen_units[DEG], "MAG", Q2);
+      memcpy(nb_HDG, nmeaOut.fields[1], FIELD_BUFFER - 1);
+      // tmpVal = nmeaOut.fields[1].toDouble();
+      // if (tmpVal < 360)
+      //   update_display(tmpVal, screen_units[DEG], "MAG", Q2);
     }
-    /*
-        if(nmeaOut.fields[0]== _xDR ){
-          if(nmeaOut.fields[4]== "PITCH"){
-            tmpVal=nmeaOut.fields[2].toDouble();
-            update_display( tmpVal,screen_units[DEGR],"PITCH",Q3);
-          }
-          //if we found PITCH we also have ROLL
-          if(nmeaOut.fields[8]== "ROLL"){
-            tmpVal=nmeaOut.fields[6].toDouble();
-            update_display( tmpVal,screen_units[DEGR],"ROLL",Q4);
-          }
-        }
-        */
     if (nmeaOut.fields[0] == _dPT)
     {
-      tmpVal = nmeaOut.fields[1].toDouble();
-      update_display(tmpVal, screen_units[MTRS], "DPT", Q3);
+      memcpy(nb_DPT, nmeaOut.fields[1], FIELD_BUFFER - 1);
+      // tmpVal = nmeaOut.fields[1].toDouble();
+      // update_display(tmpVal, screen_units[MTRS], "DPT", Q3);
     }
     if (nmeaOut.fields[0] == _VLW)
     {
-      tmpVal = nmeaOut.fields[3].toDouble();
-      update_display(tmpVal, screen_units[DIST], "TRP", Q4);
+      memcpy(_TRP, nmeaOut.fields[3], FIELD_BUFFER - 1);
+      // tmpVal = nmeaOut.fields[3].toDouble();
+      // update_display(tmpVal, screen_units[DIST], "TRP", Q4);
     }
 
     break;
@@ -1071,47 +1225,51 @@ byte startTalking()
     {
       if (nmeaOut.fields[4] == "BATT")
       {
-        tmpVal = nmeaOut.fields[2].toDouble();
-        if (tmpVal < 100)
-          update_display(tmpVal, screen_units[VOLT], "BAT", Q1);
+        memcpy(nb_BAT, nmeaOut.fields[2], FIELD_BUFFER - 1);
+        // tmpVal = nmeaOut.fields[2].toDouble();
+        // if (tmpVal < 100)
+        //   update_display(tmpVal, screen_units[VOLT], "BAT", Q1);
       }
     }
     if (nmeaOut.fields[0] == _MTW)
     {
-      tmpVal = nmeaOut.fields[1].toDouble();
-      if (tmpVal < 100)
-        update_display(tmpVal, screen_units[TEMP], "WTR", Q2);
+      memcpy(nb_WTR, nmeaOut.fields[1], FIELD_BUFFER - 1);
+      // tmpVal = nmeaOut.fields[1].toDouble();
+      // if (tmpVal < 100)
+      //   update_display(tmpVal, screen_units[TEMP], "WTR", Q2);
     }
     if (nmeaOut.fields[0] == _VLW)
     {
-      tmpVal = nmeaOut.fields[1].toDouble();
-      update_display(tmpVal, screen_units[DIST], "LOG", Q3);
+      memcpy(nb_LOG, nmeaOut.fields[1], FIELD_BUFFER - 1);
+      // tmpVal = nmeaOut.fields[1].toDouble();
+      // update_display(tmpVal, screen_units[DIST], "LOG", Q3);
     }
     if (nmeaOut.fields[0] == _VLW)
     {
-      tmpVal = nmeaOut.fields[3].toDouble();
-      update_display(tmpVal, screen_units[DIST], "TRP", Q4);
+      memcpy(_TRP, nmeaOut.fields[3], FIELD_BUFFER - 1);
+      // tmpVal = nmeaOut.fields[3].toDouble();
+      // update_display(tmpVal, screen_units[DIST], "TRP", Q4);
     }
     break;
   case MEM:
   default:
-    if ((micros() - Stop2) > Timer2)
-    {
-      Stop2 = micros(); // + Timer2;                                    // Reset timer
+    // if ((micros() - Stop2) > Timer2)
+    // {
+    //   Stop2 = micros(); // + Timer2;                                    // Reset timer
 
-      tmpVal = getFreeSram();
-      update_display(tmpVal, "Byte", "FREE", Q1);
+    //   tmpVal = getFreeSram();
+    //   update_display(tmpVal, "Byte", "FREE", Q1);
 
-      tmpVal = 0;
-      update_display(tmpVal, "V.", PROGRAM_VERSION, Q2);
+    //   tmpVal = 0;
+    //   update_display(tmpVal, "V.", PROGRAM_VERSION, Q2);
 
-      tmpVal = NmeaStack.getIndex();
-      update_display(tmpVal, " ", "STACK", Q3);
+    //   tmpVal = NmeaStack.getIndex();
+    //   update_display(tmpVal, " ", "STACK", Q3);
 
-      tmpVal = NmeaParser.getCounter();
-      update_display(tmpVal, "nr", "MSG", Q4);
-    }
-    /*
+    //   tmpVal = NmeaParser.getCounter();
+    //   update_display(tmpVal, "nr", "MSG", Q4);
+  }
+  /*
       if( show_flag){
         // One time instruction for logging when LOG button pressed
         debugWrite( "Connect a cable to the serial port on" ); 
@@ -1122,13 +1280,13 @@ byte startTalking()
       }
       */
 
-    Serial.print(nmeaOut.sentence);
+  Serial.print(nmeaOut.sentence);
 
-    break;
-  }
+  break;
+}
 #endif
 
-  return 1;
+return 1;
 }
 
 /**********************************************************************************
@@ -1241,13 +1399,11 @@ void startListening()
   //debugWrite("Listening....");
 #endif
 
-  while (Serial2.available() > 0 && nmeaStatus != TERMINATING )
+  while (Serial2.available() > 0 && nmeaStatus != TERMINATING)
   {
     decodeNMEAInput(Serial2.read());
   }
 }
-
-
 
 #ifdef TEST
 
@@ -1323,8 +1479,6 @@ void setup()
 
 #endif
 
-
-
   Serial.begin(115200);
   initializeListener();
   initializeTalker();
@@ -1333,19 +1487,17 @@ void setup()
   show_menu();
 #endif
 
-
   //Serial2.begin(4800, SERIAL_8N1, 16, 17, true);
   //nmeaSerialOut.begin(38400, SWSERIAL_8N1, 22, TALKER_PORT, true);
 }
 
 void loop()
 {
-// put your main code here, to run repeatedly:
+  // put your main code here, to run repeatedly:
 
 #ifdef TEST
   runSoftGenerator();
 #endif
-
 
   startListening();
 
@@ -1358,4 +1510,5 @@ void loop()
   {
     Serial.print(char(Serial2.read()));
   } */
+  displayData();
 }
