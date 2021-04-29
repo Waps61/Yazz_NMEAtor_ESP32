@@ -3,10 +3,13 @@
   Project:  Yazz_NMEAtor_ESP32.cpp, Copyright 2020, Roy Wassili
   Contact:  waps61 @gmail.com
   URL:      https://www.hackster.io/waps61
-  VERSION:  0.11
+  VERSION:  0.12
   Date:     10-10-2020
   Last
-  Update:   26-04-2021
+  Update:   29-04-2021
+            Beta version with display communication to Nextion NX4832K035
+            Not all parameters are show yet
+            26-04-2021
             Preparation for display implementation, compiled version and runnable
             26-04-2021 V0.10
             First runnable MVP reading NMEA data,converting and sending NMEA0183 data
@@ -38,10 +41,9 @@
 
   
  
-  Serial is reserved for the MPU9250 communication
-  Rx2 (GPIO 16) is reserved for the NMEA listener on 4800Bd
-  GPIO 22 (and 23) are reserved for NMEA talker via
-  SoftSerial on 38400 Bd
+  Serial1 Rx1 (GPIO 18) and Tx1 (GPIO 19) are reserved for the NMEA listener on 4800Bd
+  Serial2 Rx2 (GPIO 16) and Tx2 (GPIO17) are reserved for communicating with the Nextion
+  GPIO 22 (and 23) are reserved for NMEA talker via SoftSerial on 38400 Bd
   
   Hardware setup:
 
@@ -51,7 +53,7 @@
   This is used in my case.
   RS-232  | TTL shifter | ESP32
           | RS232 | TTL |
-    TX+   | +     | +   | GPIO 16
+    TX+   | +     | +   | GPIO 18
     GND   |       |     | GND
 
 Wiring Diagram (for RS-232 to NMEA0183 device)
@@ -60,7 +62,12 @@ Wiring Diagram (for RS-232 to NMEA0183 device)
      GND    |  RX - 
             |  GND (if isolated input available)
 
-
+Wiring Diagram (for ESP32 to Nextion display)
+  ESP32     | Nextion
+     Pin 16 |  TX +   
+     Pin 17 |  TX +   
+     GND    |  GND 
+      3,3V  |   5V
 
 
 ---------------
@@ -105,6 +112,7 @@ Credit:
 #define DEBUG 1
 //#define TEST 1
 //#define DISPLAY_ATTACHED 1
+#define NEXTION_ATTACHED 1 //out comment if no display available
 
 #define VESSEL_NAME "YAZZ"
 #define PROGRAM_NAME "NMEAtor ESP32"
@@ -113,14 +121,15 @@ Credit:
 #define SAMPLERATE 115200
 
 #define LISTENER_RATE 4800 // Baudrate for the listner
-#define LISTENER_PORT 16   // Serial2 port
+#define LISTENER_RX 18     // Serial1 Rx port
+#define LISTENER_TX 19     // Serial1 TX port
 #define TALKER_RATE 38400  // Baudrate for the talker
 #define TALKER_PORT 23     // SoftSerial port 2
 
 #define NMEA_RX 22
 #define NMEA_TX 23
-#define NEXTION_RX (int8_t)3
-#define NEXTION_TX (int8_t)1
+#define NEXTION_RX (int8_t)16
+#define NEXTION_TX (int8_t)17
 #define NEXTION_RCV_DELAY 100
 #define NEXTION_SND_DELAY 50
 //*** Some conversion factors
@@ -255,6 +264,7 @@ char nb_STW[FIELD_BUFFER] = {0};
 char nb_HDG[FIELD_BUFFER] = {0};
 char nb_LOG[FIELD_BUFFER] = {0};
 char nb_WTR[FIELD_BUFFER] = {0};
+char nb_TRP[FIELD_BUFFER] = {0};
 char oldVal[255] = {0}; // holds previos _BITVALUE to check if we need to send
 
 enum NMEAReceiveStatus
@@ -277,24 +287,7 @@ NexPicture dispStatus = NexPicture(1, 35, WINDDISPLAY_STATUS);
 NexText nmeaTxt = NexText(1, 16, WINDDISPLAY_NMEA);
 NexText versionTxt = NexText(0, 3, "version");
 
-SoftwareSerial nmeaSerialOut; //(52,TALKER_PORT,true); // signal need to be inverted for RS-232
-
-/* freeMem function with varibles*/
-extern uint16_t __bss_end;
-extern uint16_t __heap_start;
-extern uint16_t *__brkval;
-
-uint16_t getFreeSram()
-{
-  uint16_t newVariable;
-  // heap is empty, use bss as start memory address
-  if (__brkval == 0)
-    return (uint16_t)((&newVariable) - (&__bss_end));
-  // use heap end as the start of the memory address
-  else
-    return (uint16_t)((&newVariable) - (__brkval));
-};
-  /* end freeMem function */
+SoftwareSerial nmeaSerialOut; // // signal need to be inverted for RS-232
 
 #define WHITE 0xFFFF /* 255, 255, 255 */
 #define BLACK 0x0000 /*   0,   0,   0 */
@@ -445,8 +438,6 @@ unsigned long Stop2 = 0;
 bool on = true;
 byte pin = 22;
 
-String mpuNMEAString = "";
-
 /*
   * Setting for Serial interrupt
   */
@@ -471,181 +462,6 @@ void listenerReady()
 {
   listenerDataReady = true;
 }
-
-#ifdef DISPLAY_ATTACHED
-/* 
-  puts a string in a foreground/background color on position x,y
-*/
-void show_string(char *str, int16_t x, int16_t y, uint8_t csize, uint16_t fc, uint16_t bc, boolean mode)
-{
-  my_lcd.Set_Text_Mode(mode); // if true background of button is used
-  my_lcd.Set_Text_Size(csize);
-  my_lcd.Set_Text_colour(fc);
-  my_lcd.Set_Text_Back_colour(bc);
-  my_lcd.Print_String(str, x, y);
-}
-/* 
-  clears the visible part of the screen above the buttons
-*/
-void wipe_screen()
-{
-  my_lcd.Set_Draw_color(BLACK);
-  my_lcd.Fill_Rectangle(0, 0, 480, BUTTON_Y);
-}
-
-/*
-Prints a line on the TFT screen taking into account that there is
-a button row from y>BUTTON_Y
-*/
-void screen_println(char *str, uint8_t csize, uint16_t fc, uint16_t bc, boolean mode)
-{
-  if (screen_row > (BUTTON_Y - 8))
-  {
-    screen_row = 0;
-    wipe_screen();
-  }
-  my_lcd.Set_Text_Mode(mode);
-  my_lcd.Set_Text_Size(csize);
-  my_lcd.Set_Text_colour(fc);
-  my_lcd.Set_Text_Back_colour(bc);
-  my_lcd.Print_String(str, 0, screen_row);
-  screen_row += 8 * csize;
-}
-
-/*
-Prints the measured value and it's units + tag combi in one of the quadrants
-*/
-void update_display(double val, const char *str, const char *tag, int8_t q)
-{
-  uint16_t x = 0, y = 0, s = 6;
-  // which quadrants needs an update
-  switch (q)
-  {
-  case Q1:
-    x = 10;
-    y = 10;
-    break;
-  case Q2:
-    x = 240;
-    y = 10;
-    break;
-  case Q3:
-    x = 10;
-    y = 150;
-    break;
-  case Q4:
-    x = 240;
-    y = 150;
-    break;
-  default:
-    break;
-  }
-  // adjust the fontsize for large numbers o fit the screen
-  if (val > 999.9)
-    s = 4;
-  else if (val > 9999.9)
-    s = 3;
-  else if (val > 99999.9)
-    s = 2;
-  else if (val > 999999.9)
-    s = 1;
-  else
-    s = 6;
-  // print the value
-  my_lcd.Set_Text_Mode(false);
-  my_lcd.Set_Text_Size(s);
-  my_lcd.Set_Text_colour(YELLOW);
-  my_lcd.Set_Text_Back_colour(BLACK);
-  my_lcd.Print_Number_Float(val, 1, x, y, '.', 5, ' ');
-  // print the unit and tag
-  my_lcd.Set_Text_Size(3);
-  my_lcd.Set_Text_colour(WHITE);
-  my_lcd.Print_String(str, x + 50, y + 50);
-  my_lcd.Print_String(tag, x + 120, y + 50);
-}
-
-/*
-Show the menu as a row of 4 buttons on the lower part of the display
-*/
-void show_menu()
-{
-  int i;
-  uint16_t c = RED;
-  wipe_screen();
-  for (i = 0; i < (int)(sizeof(menu_button) / sizeof(button_info)); i++)
-  {
-    if (i == active_menu_button)
-      c = RED;
-    else
-      c = menu_button[i].button_name_colour;
-    my_lcd.Set_Draw_color(menu_button[i].button_colour);
-    my_lcd.Fill_Round_Rectangle(menu_button[i].button_x,
-                                menu_button[i].button_y,
-                                menu_button[i].button_x + BUTTON_W,
-                                menu_button[i].button_y + BUTTON_H,
-                                3);
-    show_string(menu_button[i].button_name,
-                menu_button[i].button_x + 5,
-                menu_button[i].button_y + 13,
-                menu_button[i].button_name_size,
-                c,
-                menu_button[i].button_colour,
-                true);
-  }
-}
-
-void buttonPressed()
-{
-  TSPoint pt, p = ts.getPoint();
-  uint8_t prev_button = active_menu_button;
-  pinMode(XM, OUTPUT);
-  pinMode(YP, OUTPUT);
-  //if (p.z > MINPRESSURE && p.z < MAXPRESSURE)
-
-  if (p.z > ts.pressureThreshhold)
-  {
-
-    pt = p;
-    p.y = map(pt.x, TS_MINX, TS_MAXX, my_lcd.Get_Display_Height(), 0);
-    p.x = map(pt.y, TS_MINY, TS_MAXY, my_lcd.Get_Display_Width(), 0);
-
-    if (p.y > BUTTON_Y && p.y < (BUTTON_Y + BUTTON_H))
-    {
-      if (p.x > (2 * (BUTTON_X + BUTTON_W)))
-      {
-        //button LOG or MEM pressed
-        if (p.x > (3 * (BUTTON_X + BUTTON_W)))
-        {
-          active_menu_button = MEM;
-          show_flag = true;
-        }
-        else
-          active_menu_button = LOG;
-      }
-      else if (p.x < (BUTTON_X + BUTTON_W))
-        active_menu_button = SPD;
-      else
-        active_menu_button = CRS;
-
-      show_string(menu_button[prev_button].button_name,
-                  menu_button[prev_button].button_x + 5,
-                  menu_button[prev_button].button_y + 13,
-                  menu_button[prev_button].button_name_size,
-                  menu_button[prev_button].button_name_colour,
-                  menu_button[prev_button].button_colour,
-                  true);
-      show_string(menu_button[active_menu_button].button_name,
-                  menu_button[active_menu_button].button_x + 5,
-                  menu_button[active_menu_button].button_y + 13,
-                  menu_button[active_menu_button].button_name_size,
-                  RED,
-                  menu_button[active_menu_button].button_colour,
-                  true);
-      wipe_screen();
-    }
-  }
-}
-#endif
 
 /*
 debugWrite() <--provides basic debug info from other tasks
@@ -994,7 +810,7 @@ NMEAData NmeaData;
 
 /*
   Initialize the NMEA Talker port and baudrate
-  on RX/TX port 2
+  on RX/TX port 2 to the multiplexer
 */
 void initializeTalker()
 {
@@ -1122,7 +938,7 @@ byte startTalking()
 {
   NMEAData nmeaOut;
 
-#ifdef DISPLAY_ATTACHED
+#ifdef NEXTION_ATTACHED
   double tmpVal = 0.0;
 #endif
 
@@ -1146,86 +962,86 @@ byte startTalking()
     debugWrite(" Sending :" + nmeaOut.sentence);
 #endif
   }
-#ifdef DISPLAY_ATTACHED
+#ifdef NEXTION_ATTACHED
   // check which screens is active and update with data
-  switch (active_menu_button)
+  // switch (active_menu_button)
+  // {
+
+  // case SPEED:
+  // speeds are checked for values <100; Higher is non existant
+  if (nmeaOut.fields[0] == _RMC)
   {
+    memcpy(nb_SOG, &nmeaOut.fields[7], FIELD_BUFFER - 1);
 
-  case SPEED:
-    // speeds are checked for values <100; Higher is non existant
-    if (nmeaOut.fields[0] == _RMC)
-    {
-      memcpy(nb_SOG, nmeaOut.fields[7], FIELD_BUFFER - 1);
-
-      /* tmpVal = nmeaOut.fields[7].toDouble();
+    /* tmpVal = nmeaOut.fields[7].toDouble();
       if (tmpVal < 100)
         update_display(tmpVal, screen_units[SPEED], "SOG", Q1); */
-    }
-    if (nmeaOut.fields[0] == _VHW)
+  }
+  if (nmeaOut.fields[0] == _VHW)
+  {
+    memcpy(nb_STW, &nmeaOut.fields[5], FIELD_BUFFER - 1);
+    // tmpVal = nmeaOut.fields[5].toDouble();
+    // if (tmpVal < 100)
+    //   update_display(tmpVal, screen_units[SPEED], "STW", Q2);
+  }
+  if (nmeaOut.fields[0] == _VWR)
+  {
+    memcpy(nb_AWS, &nmeaOut.fields[3], FIELD_BUFFER - 1);
+    memcpy(nb_AWA, &nmeaOut.fields[1], FIELD_BUFFER - 1);
+    if (nmeaOut.fields[2] == "L")
     {
-      memcpy(nb_STW, nmeaOut.fields[5], FIELD_BUFFER - 1);
-      // tmpVal = nmeaOut.fields[5].toDouble();
-      // if (tmpVal < 100)
-      //   update_display(tmpVal, screen_units[SPEED], "STW", Q2);
+      //update_display(tmpVal, screen_units[DEGL], "AWA", Q4);
+      memmove(nb_AWA + 1, nb_AWA, FIELD_BUFFER - 2);
+      nb_AWA[0] = '-';
     }
-    if (nmeaOut.fields[0] == _VWR)
-    {
-      memcpy(nb_AWS, nmeaOut.fields[3], FIELD_BUFFER - 1);
-      memcpy(nb_AWA, nmeaOut.fields[1], FIELD_BUFFER - 1);
-      if (nmeaOut.fields[2] == "L")
-      {
-        //update_display(tmpVal, screen_units[DEGL], "AWA", Q4);
-        memmove(nb_AWA + 1, nb_AWA, FIELD_BUFFER - 2);
-        nb_AWA[0] = '-';
-      }
-      // tmpVal = nmeaOut.fields[3].toDouble();
-      // if (tmpVal < 100)
-      //   update_display(tmpVal, screen_units[SPEED], "AWS", Q3);
-      // tmpVal = nmeaOut.fields[1].toDouble();
-      //char tmpChr[(nmeaOut.fields[2].length())];
-      //(nmeaOut.fields[2]).toCharArray(tmpChr,nmeaOut.fields[2].length(),0);
-      // if (tmpVal < 360 && nmeaOut.fields[2] == "R")
-      //   update_display(tmpVal, screen_units[DEGR], "AWA", Q4);
-      // else if (tmpVal < 360 && nmeaOut.fields[2] == "L")
-      //   update_display(tmpVal, screen_units[DEGL], "AWA", Q4);
-    }
-    break;
-  case CRS:
-    if (nmeaOut.fields[0] == _RMC)
-    {
-      memcpy(nb_COG, nmeaOut.fields[8], FIELD_BUFFER - 1);
-      // tmpVal = nmeaOut.fields[8].toDouble();
-      // if (tmpVal < 360)
-      //   update_display(tmpVal, screen_units[DEG], "TRU", Q1);
-    }
-    if (nmeaOut.fields[0] == _hDG)
-    {
-      memcpy(nb_HDG, nmeaOut.fields[1], FIELD_BUFFER - 1);
-      // tmpVal = nmeaOut.fields[1].toDouble();
-      // if (tmpVal < 360)
-      //   update_display(tmpVal, screen_units[DEG], "MAG", Q2);
-    }
-    if (nmeaOut.fields[0] == _dPT)
-    {
-      memcpy(nb_DPT, nmeaOut.fields[1], FIELD_BUFFER - 1);
-      // tmpVal = nmeaOut.fields[1].toDouble();
-      // update_display(tmpVal, screen_units[MTRS], "DPT", Q3);
-    }
-    if (nmeaOut.fields[0] == _VLW)
-    {
-      memcpy(_TRP, nmeaOut.fields[3], FIELD_BUFFER - 1);
-      // tmpVal = nmeaOut.fields[3].toDouble();
-      // update_display(tmpVal, screen_units[DIST], "TRP", Q4);
-    }
+    // tmpVal = nmeaOut.fields[3].toDouble();
+    // if (tmpVal < 100)
+    //   update_display(tmpVal, screen_units[SPEED], "AWS", Q3);
+    // tmpVal = nmeaOut.fields[1].toDouble();
+    //char tmpChr[(nmeaOut.fields[2].length())];
+    //(nmeaOut.fields[2]).toCharArray(tmpChr,nmeaOut.fields[2].length(),0);
+    // if (tmpVal < 360 && nmeaOut.fields[2] == "R")
+    //   update_display(tmpVal, screen_units[DEGR], "AWA", Q4);
+    // else if (tmpVal < 360 && nmeaOut.fields[2] == "L")
+    //   update_display(tmpVal, screen_units[DEGL], "AWA", Q4);
+  }
+  //   break;
+  // case CRS:
+  if (nmeaOut.fields[0] == _RMC)
+  {
+    memcpy(nb_COG, &nmeaOut.fields[8], FIELD_BUFFER - 1);
+    // tmpVal = nmeaOut.fields[8].toDouble();
+    // if (tmpVal < 360)
+    //   update_display(tmpVal, screen_units[DEG], "TRU", Q1);
+  }
+  if (nmeaOut.fields[0] == _hDG)
+  {
+    memcpy(nb_HDG, &nmeaOut.fields[1], FIELD_BUFFER - 1);
+    // tmpVal = nmeaOut.fields[1].toDouble();
+    // if (tmpVal < 360)
+    //   update_display(tmpVal, screen_units[DEG], "MAG", Q2);
+  }
+  if (nmeaOut.fields[0] == _dPT)
+  {
+    memcpy(nb_DPT, &nmeaOut.fields[1], FIELD_BUFFER - 1);
+    // tmpVal = nmeaOut.fields[1].toDouble();
+    // update_display(tmpVal, screen_units[MTRS], "DPT", Q3);
+  }
+  if (nmeaOut.fields[0] == _VLW)
+  {
+    memcpy(nb_TRP, &nmeaOut.fields[3], FIELD_BUFFER - 1);
+    // tmpVal = nmeaOut.fields[3].toDouble();
+    // update_display(tmpVal, screen_units[DIST], "TRP", Q4);
+    //   }
 
-    break;
-  case LOG:
+    //   break;
+    // case LOG:
     // Voltage an Temperature are checked <100; Higher is non exsitant.
     if (nmeaOut.fields[0] == _xDR)
     {
       if (nmeaOut.fields[4] == "BATT")
       {
-        memcpy(nb_BAT, nmeaOut.fields[2], FIELD_BUFFER - 1);
+        memcpy(nb_BAT, &nmeaOut.fields[2], FIELD_BUFFER - 1);
         // tmpVal = nmeaOut.fields[2].toDouble();
         // if (tmpVal < 100)
         //   update_display(tmpVal, screen_units[VOLT], "BAT", Q1);
@@ -1233,43 +1049,43 @@ byte startTalking()
     }
     if (nmeaOut.fields[0] == _MTW)
     {
-      memcpy(nb_WTR, nmeaOut.fields[1], FIELD_BUFFER - 1);
+      memcpy(nb_WTR, &nmeaOut.fields[1], FIELD_BUFFER - 1);
       // tmpVal = nmeaOut.fields[1].toDouble();
       // if (tmpVal < 100)
       //   update_display(tmpVal, screen_units[TEMP], "WTR", Q2);
     }
     if (nmeaOut.fields[0] == _VLW)
     {
-      memcpy(nb_LOG, nmeaOut.fields[1], FIELD_BUFFER - 1);
+      memcpy(nb_LOG, &nmeaOut.fields[1], FIELD_BUFFER - 1);
       // tmpVal = nmeaOut.fields[1].toDouble();
       // update_display(tmpVal, screen_units[DIST], "LOG", Q3);
     }
-    if (nmeaOut.fields[0] == _VLW)
-    {
-      memcpy(_TRP, nmeaOut.fields[3], FIELD_BUFFER - 1);
-      // tmpVal = nmeaOut.fields[3].toDouble();
-      // update_display(tmpVal, screen_units[DIST], "TRP", Q4);
-    }
-    break;
-  case MEM:
-  default:
-    // if ((micros() - Stop2) > Timer2)
-    // {
-    //   Stop2 = micros(); // + Timer2;                                    // Reset timer
+    //  if (nmeaOut.fields[0] == _VLW)
+    //   {
+    //     memcpy(nb_TRP, &nmeaOut.fields[3], FIELD_BUFFER - 1);
+    //     // tmpVal = nmeaOut.fields[3].toDouble();
+    //     // update_display(tmpVal, screen_units[DIST], "TRP", Q4);
+    // //   }
+    // //   break;
+    // // case MEM:
+    // // default:
+    //   // if ((micros() - Stop2) > Timer2)
+    //   // {
+    //   //   Stop2 = micros(); // + Timer2;                                    // Reset timer
 
-    //   tmpVal = getFreeSram();
-    //   update_display(tmpVal, "Byte", "FREE", Q1);
+    //   //   tmpVal = getFreeSram();
+    //   //   update_display(tmpVal, "Byte", "FREE", Q1);
 
-    //   tmpVal = 0;
-    //   update_display(tmpVal, "V.", PROGRAM_VERSION, Q2);
+    //   //   tmpVal = 0;
+    //   //   update_display(tmpVal, "V.", PROGRAM_VERSION, Q2);
 
-    //   tmpVal = NmeaStack.getIndex();
-    //   update_display(tmpVal, " ", "STACK", Q3);
+    //   //   tmpVal = NmeaStack.getIndex();
+    //   //   update_display(tmpVal, " ", "STACK", Q3);
 
-    //   tmpVal = NmeaParser.getCounter();
-    //   update_display(tmpVal, "nr", "MSG", Q4);
-  }
-  /*
+    //   //   tmpVal = NmeaParser.getCounter();
+    //   //   update_display(tmpVal, "nr", "MSG", Q4);
+    // }
+    /*
       if( show_flag){
         // One time instruction for logging when LOG button pressed
         debugWrite( "Connect a cable to the serial port on" ); 
@@ -1280,13 +1096,13 @@ byte startTalking()
       }
       */
 
-  Serial.print(nmeaOut.sentence);
+    Serial.print(nmeaOut.sentence);
 
-  break;
-}
+    // break;
+  }
 #endif
 
-return 1;
+  return 1;
 }
 
 /**********************************************************************************
@@ -1300,15 +1116,19 @@ Cleasr the inputbuffer by reading until empty, since Serial.flush does not this 
 void clearNMEAInputBuffer()
 {
 
-  while (Serial2.available() > 0)
+  while (Serial1.available() > 0)
   {
-    Serial2.read();
+    Serial1.read();
   }
 }
 
+/*
+* Initializes UART 2 for incomming NMEA0183 data from the Robertson network
+*/
 void initializeListener()
 {
-  Serial2.begin(LISTENER_RATE, SERIAL_8N1, LISTENER_PORT, 17, true);
+
+  Serial1.begin(LISTENER_RATE, SERIAL_8N1, LISTENER_RX, LISTENER_TX, true);
   //clearNMEAInputBuffer();
 #ifdef DEBUG
   debugWrite("Listener initialized...");
@@ -1399,9 +1219,9 @@ void startListening()
   //debugWrite("Listening....");
 #endif
 
-  while (Serial2.available() > 0 && nmeaStatus != TERMINATING)
+  while (Serial1.available() > 0 && nmeaStatus != TERMINATING)
   {
-    decodeNMEAInput(Serial2.read());
+    decodeNMEAInput(Serial1.read());
   }
 }
 
@@ -1462,33 +1282,43 @@ void setup()
 {
   // put your setup code here, to run once:
   //Serial.begin(SAMPLERATE);
-#ifdef DISPLAY_ATTACHED
-  my_lcd.Set_Rotation(1); //Landscape
-  // set brightness
-  //my_lcd.Write_Cmd_Data(0x51, 0x01);
-  my_lcd.Init_LCD();
-  my_lcd.Fill_Screen(BLACK);
-  char vessel_name[] = VESSEL_NAME;
-  char program_name[] = PROGRAM_NAME;
-  char program_version[] = PROGRAM_VERSION;
-  show_string(vessel_name, CENTER, 132, 8, RED, BLACK, false);
-  show_string(program_name, CENTER, 195, 2, WHITE, BLACK, false);
-  show_string(program_version, CENTER, 215, 2, WHITE, BLACK, false);
-  delay(1000);
-  flag_colour = YELLOW;
+#ifdef NEXTION_ATTACHED
+  if (nexInit())
+  {
+    dbSerial.println("Initialisation succesful....");
+  }
+  else
+  {
+    dbSerial.println("Initialisation failed...");
+    dbSerial.println("Resetting Nextion...");
+    sendCommand("rest");
+    delay(3000);
+  }
 
+  delay(150);
+  dbSerial.print(" Writing version to splash: ");
+  versionTxt.setText(PROGRAM_VERSION);
+  delay(5000);
+  dbSerial.print("Switcing to page 1: ");
+  sendCommand("page 1");
+  recvRetCommandFinished(NEXTION_RCV_DELAY);
+
+  // restet the HMI o default 0 values
+  memcpy(nb_AWA, "--.-", 5);
+  memcpy(nb_COG, "---.-", 6);
+  memcpy(nb_SOG, "--.-", 5);
+  memcpy(nb_AWS, "--.-", 5);
+  memcpy(nb_DPT, "--.-", 5);
+  memcpy(nb_BAT, "--.-", 5);
+  displayData();
 #endif
 
-  Serial.begin(115200);
+  //Serial.begin(115200);
   initializeListener();
   initializeTalker();
 
-#ifdef DISPLAY_ATTACHED
-  show_menu();
-#endif
-
-  //Serial2.begin(4800, SERIAL_8N1, 16, 17, true);
-  //nmeaSerialOut.begin(38400, SWSERIAL_8N1, 22, TALKER_PORT, true);
+  //Serial1.begin(4800, SERIAL_8N1, 16, 17, true);
+  nmeaSerialOut.begin(38400, SWSERIAL_8N1, 22, TALKER_PORT, true);
 }
 
 void loop()
@@ -1506,9 +1336,9 @@ void loop()
 #endif
 
   startTalking();
-  /* while (Serial2.available())
+  /* while (Serial1.available())
   {
-    Serial.print(char(Serial2.read()));
+    Serial.print(char(Serial1.read()));
   } */
   displayData();
 }
