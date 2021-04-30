@@ -3,18 +3,23 @@
   Project:  Yazz_NMEAtor_ESP32.cpp, Copyright 2020, Roy Wassili
   Contact:  waps61 @gmail.com
   URL:      https://www.hackster.io/waps61
-  VERSION:  0.12
+  VERSION:  1.0
   Date:     10-10-2020
   Last
-  Update:   29-04-2021
+  Update:   30-04-2021 V1.0
+            Released version
+            30-04-2021 V0.13
+            Tested version for input and output with all parameters to display
+            29-04-2021 V0.12
             Beta version with display communication to Nextion NX4832K035
             Not all parameters are show yet
-            26-04-2021
+            26-04-2021 V0.11
             Preparation for display implementation, compiled version and runnable
             26-04-2021 V0.10
             First runnable MVP reading NMEA data,converting and sending NMEA0183 data
             18-04-2021 V0.02
-            Fixed a bug in tthe Depth calculation
+            Fixed a bug in the Depth calculation in the Arduino V1.04 that was inherited 
+            in this version. Aruino version updated to V1.05
             10-10-2020 V0.01
             Port to ESP32 from Arduino V1.04
             
@@ -111,12 +116,11 @@ Credit:
 // *** be ommitted from the code
 #define DEBUG 1
 //#define TEST 1
-//#define DISPLAY_ATTACHED 1
 #define NEXTION_ATTACHED 1 //out comment if no display available
 
 #define VESSEL_NAME "YAZZ"
 #define PROGRAM_NAME "NMEAtor ESP32"
-#define PROGRAM_VERSION "0.02"
+#define PROGRAM_VERSION "1.0"
 
 #define SAMPLERATE 115200
 
@@ -152,7 +156,7 @@ Credit:
 
 #define STACKSIZE 10 // Size of the stack; adjust according use
 
-#define TALKER_ID "EP"
+#define TALKER_ID "AO"
 #define VARIATION "1.57,E" //Varition in Lemmer on 12-05-2020, change 0.11 per year
 //*** On my boat there is an ofsett of 0.2V between the battery monitor and what
 //*** is measured by the Robertson Databox
@@ -239,7 +243,7 @@ Credit:
 //*** define the oject tags of the Nextion display
 #define WINDDISPLAY_STATUS "status"
 #define WINDDISPLAY_STATUS_VALUE "winddisplay.status.val"
-#define WINDDISPLAY_NMEA "nmea"
+#define WINDDISPLAY_NMEA "speed.nmea"
 #define FIELD_BUFFER 10 //nr of char used for displaying info on Nextion
 
 //*** A structure to hold the NMEA data
@@ -251,6 +255,7 @@ typedef struct
 
 } NMEAData;
 
+// Declare buffers for NMEA string and display parameters
 char nmeaBuffer[NMEA_BUFFER_SIZE + 1] = {0};
 char nb_AWA[FIELD_BUFFER] = {0};
 char nb_COG[FIELD_BUFFER] = {0};
@@ -263,7 +268,7 @@ char nb_TWS[FIELD_BUFFER] = {0};
 char nb_STW[FIELD_BUFFER] = {0};
 char nb_HDG[FIELD_BUFFER] = {0};
 char nb_LOG[FIELD_BUFFER] = {0};
-char nb_WTR[FIELD_BUFFER] = {0};
+char nb_MTW[FIELD_BUFFER] = {0};
 char nb_TRP[FIELD_BUFFER] = {0};
 char oldVal[255] = {0}; // holds previos _BITVALUE to check if we need to send
 
@@ -652,7 +657,7 @@ NMEAData NMEAParser::nmeaSpecialty(NMEAData nmeaIn)
       // Since we modify the sentence we'll also put our talker ID in place
 
       //*** below code is for DPT since TZ iBoat does not use DBT
-      nmeaOut.fields[0] = "$EPDPT";
+      nmeaOut.fields[0] = "$AODPT";
       if (nmeaIn.fields[3] == "f")
       {
         //depth in feet need to be converted
@@ -688,7 +693,7 @@ NMEAData NMEAParser::nmeaSpecialty(NMEAData nmeaIn)
       reset();
       float batt = (nmeaIn.fields[1]).toFloat() + BATTERY_OFFSET;
       nmeaOut.nrOfFields = 5;
-      nmeaOut.fields[0] = "$EPXDR";
+      nmeaOut.fields[0] = "$AOXDR";
       nmeaOut.fields[1] = "U";              // the transducer unit
       nmeaOut.fields[2] = String(batt, 1);  // the actual measurement value
       nmeaOut.fields[3] = nmeaIn.fields[2]; // unit of measure
@@ -876,11 +881,46 @@ void displayData()
     strcat(_BITVAL, nb_BAT);
     strcat(_BITVAL, "#");
   }
-  // set dpt is is a number
+  // set dpt if is a number
   if (isNumeric(nb_DPT))
   {
     strcat(_BITVAL, "DPT=");
     strcat(_BITVAL, nb_DPT);
+    strcat(_BITVAL, "#");
+  }
+  // set trp if is a number
+  if (isNumeric(nb_TRP))
+  {
+    strcat(_BITVAL, "TRP=");
+    strcat(_BITVAL, nb_TRP);
+    strcat(_BITVAL, "#");
+  }
+  // set log if is a number
+  if (isNumeric(nb_LOG))
+  {
+    strcat(_BITVAL, "LOG=");
+    strcat(_BITVAL, nb_LOG);
+    strcat(_BITVAL, "#");
+  }
+  // set WTR if is a number
+  if (isNumeric(nb_MTW))
+  {
+    strcat(_BITVAL, "MTW=");
+    strcat(_BITVAL, nb_MTW);
+    strcat(_BITVAL, "#");
+  }
+  // set hdg if is a number
+  if (isNumeric(nb_HDG))
+  {
+    strcat(_BITVAL, "HDG=");
+    strcat(_BITVAL, nb_HDG);
+    strcat(_BITVAL, "#");
+  }
+  // set stw if is a number
+  if (isNumeric(nb_STW))
+  {
+    strcat(_BITVAL, "STW=");
+    strcat(_BITVAL, nb_STW);
     strcat(_BITVAL, "#");
   }
   // Calculate TWS from AWA and SOG as described Starpath TrueWind by, David Burch, 2000
@@ -938,10 +978,6 @@ byte startTalking()
 {
   NMEAData nmeaOut;
 
-#ifdef NEXTION_ATTACHED
-  double tmpVal = 0.0;
-#endif
-
   //*** for all  NMEAData opjects on the stack
   //*** NOTE; the stack has a buffer of NMEA_BUFFER_SIZE objects
   //***       normaly only 1 or 2 should be on the stack
@@ -980,9 +1016,6 @@ byte startTalking()
   if (nmeaOut.fields[0] == _VHW)
   {
     memcpy(nb_STW, &nmeaOut.fields[5], FIELD_BUFFER - 1);
-    // tmpVal = nmeaOut.fields[5].toDouble();
-    // if (tmpVal < 100)
-    //   update_display(tmpVal, screen_units[SPEED], "STW", Q2);
   }
   if (nmeaOut.fields[0] == _VWR)
   {
@@ -994,112 +1027,40 @@ byte startTalking()
       memmove(nb_AWA + 1, nb_AWA, FIELD_BUFFER - 2);
       nb_AWA[0] = '-';
     }
-    // tmpVal = nmeaOut.fields[3].toDouble();
-    // if (tmpVal < 100)
-    //   update_display(tmpVal, screen_units[SPEED], "AWS", Q3);
-    // tmpVal = nmeaOut.fields[1].toDouble();
-    //char tmpChr[(nmeaOut.fields[2].length())];
-    //(nmeaOut.fields[2]).toCharArray(tmpChr,nmeaOut.fields[2].length(),0);
-    // if (tmpVal < 360 && nmeaOut.fields[2] == "R")
-    //   update_display(tmpVal, screen_units[DEGR], "AWA", Q4);
-    // else if (tmpVal < 360 && nmeaOut.fields[2] == "L")
-    //   update_display(tmpVal, screen_units[DEGL], "AWA", Q4);
   }
-  //   break;
-  // case CRS:
   if (nmeaOut.fields[0] == _RMC)
   {
     memcpy(nb_COG, &nmeaOut.fields[8], FIELD_BUFFER - 1);
-    // tmpVal = nmeaOut.fields[8].toDouble();
-    // if (tmpVal < 360)
-    //   update_display(tmpVal, screen_units[DEG], "TRU", Q1);
   }
   if (nmeaOut.fields[0] == _hDG)
   {
     memcpy(nb_HDG, &nmeaOut.fields[1], FIELD_BUFFER - 1);
-    // tmpVal = nmeaOut.fields[1].toDouble();
-    // if (tmpVal < 360)
-    //   update_display(tmpVal, screen_units[DEG], "MAG", Q2);
   }
   if (nmeaOut.fields[0] == _dPT)
   {
     memcpy(nb_DPT, &nmeaOut.fields[1], FIELD_BUFFER - 1);
-    // tmpVal = nmeaOut.fields[1].toDouble();
-    // update_display(tmpVal, screen_units[MTRS], "DPT", Q3);
+  }
+
+  
+  if (nmeaOut.fields[0] == _xDR)
+  {
+    if (nmeaOut.fields[4] == "BATT")
+    {
+      memcpy(nb_BAT, &nmeaOut.fields[2], FIELD_BUFFER - 1);
+    }
+  }
+  if (nmeaOut.fields[0] == _MTW)
+  {
+    memcpy(nb_MTW, &nmeaOut.fields[1], FIELD_BUFFER - 1);
   }
   if (nmeaOut.fields[0] == _VLW)
   {
+    memcpy(nb_LOG, &nmeaOut.fields[1], FIELD_BUFFER - 1);
     memcpy(nb_TRP, &nmeaOut.fields[3], FIELD_BUFFER - 1);
-    // tmpVal = nmeaOut.fields[3].toDouble();
-    // update_display(tmpVal, screen_units[DIST], "TRP", Q4);
-    //   }
-
-    //   break;
-    // case LOG:
-    // Voltage an Temperature are checked <100; Higher is non exsitant.
-    if (nmeaOut.fields[0] == _xDR)
-    {
-      if (nmeaOut.fields[4] == "BATT")
-      {
-        memcpy(nb_BAT, &nmeaOut.fields[2], FIELD_BUFFER - 1);
-        // tmpVal = nmeaOut.fields[2].toDouble();
-        // if (tmpVal < 100)
-        //   update_display(tmpVal, screen_units[VOLT], "BAT", Q1);
-      }
-    }
-    if (nmeaOut.fields[0] == _MTW)
-    {
-      memcpy(nb_WTR, &nmeaOut.fields[1], FIELD_BUFFER - 1);
-      // tmpVal = nmeaOut.fields[1].toDouble();
-      // if (tmpVal < 100)
-      //   update_display(tmpVal, screen_units[TEMP], "WTR", Q2);
-    }
-    if (nmeaOut.fields[0] == _VLW)
-    {
-      memcpy(nb_LOG, &nmeaOut.fields[1], FIELD_BUFFER - 1);
-      // tmpVal = nmeaOut.fields[1].toDouble();
-      // update_display(tmpVal, screen_units[DIST], "LOG", Q3);
-    }
-    //  if (nmeaOut.fields[0] == _VLW)
-    //   {
-    //     memcpy(nb_TRP, &nmeaOut.fields[3], FIELD_BUFFER - 1);
-    //     // tmpVal = nmeaOut.fields[3].toDouble();
-    //     // update_display(tmpVal, screen_units[DIST], "TRP", Q4);
-    // //   }
-    // //   break;
-    // // case MEM:
-    // // default:
-    //   // if ((micros() - Stop2) > Timer2)
-    //   // {
-    //   //   Stop2 = micros(); // + Timer2;                                    // Reset timer
-
-    //   //   tmpVal = getFreeSram();
-    //   //   update_display(tmpVal, "Byte", "FREE", Q1);
-
-    //   //   tmpVal = 0;
-    //   //   update_display(tmpVal, "V.", PROGRAM_VERSION, Q2);
-
-    //   //   tmpVal = NmeaStack.getIndex();
-    //   //   update_display(tmpVal, " ", "STACK", Q3);
-
-    //   //   tmpVal = NmeaParser.getCounter();
-    //   //   update_display(tmpVal, "nr", "MSG", Q4);
-    // }
-    /*
-      if( show_flag){
-        // One time instruction for logging when LOG button pressed
-        debugWrite( "Connect a cable to the serial port on" ); 
-        debugWrite("115200 Baud!");
-        debugWrite( String(PROGRAM_NAME)+" "+String(PROGRAM_VERSION));
-        debugWrite("Free SRAM:"+ String(getFreeSram()));
-        show_flag = false;
-      }
-      */
-
-    Serial.print(nmeaOut.sentence);
-
-    // break;
   }
+
+  Serial.print(nmeaOut.sentence);
+
 #endif
 
   return 1;
@@ -1247,20 +1208,20 @@ void runSoftGenerator()
 {
   softTimerNow = millis();
   //if( softTimerNow - softTimerOld >250 ){
-  if (on)
-  {
-    digitalWrite(pin, LOW);
-    on = false;
-    //debugWrite("BLINKER: OFF");
-    // If the LED is off, turn it on and remember the state.
-  }
-  else
-  {
-    digitalWrite(pin, HIGH);
-    on = true;
-    //Send output to Serial Monitor via debugger
-    //debugWrite("BLINKER: ON");
-  }
+  // if (on)
+  // {
+  //   digitalWrite(pin, LOW);
+  //   on = false;
+  //   //debugWrite("BLINKER: OFF");
+  //   // If the LED is off, turn it on and remember the state.
+  // }
+  // else
+  // {
+  //   digitalWrite(pin, HIGH);
+  //   on = true;
+  //   //Send output to Serial Monitor via debugger
+  //   //debugWrite("BLINKER: ON");
+  // }
 
   if (softIndex < 10)
   {
@@ -1304,12 +1265,18 @@ void setup()
   recvRetCommandFinished(NEXTION_RCV_DELAY);
 
   // restet the HMI o default 0 values
-  memcpy(nb_AWA, "--.-", 5);
+  memcpy(nb_AWA, "---", 4);
   memcpy(nb_COG, "---.-", 6);
   memcpy(nb_SOG, "--.-", 5);
   memcpy(nb_AWS, "--.-", 5);
   memcpy(nb_DPT, "--.-", 5);
   memcpy(nb_BAT, "--.-", 5);
+  memcpy(nb_MTW, "--.-", 5);
+  memcpy(nb_TRP, "--.-", 5);
+  memcpy(nb_LOG, "--.-", 5);
+  memcpy(nb_HDG, "--.-", 5);
+  memcpy(nb_STW, "--.-", 5);
+  memcpy(nb_TWS, "--.-", 5);
   displayData();
 #endif
 
