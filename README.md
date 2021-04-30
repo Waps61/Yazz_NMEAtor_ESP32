@@ -1,14 +1,24 @@
 # Yazz_NMEAtor_ESP32
-Project:  Yazz_NMEAtor_ESP32.cpp, Copyright 2021, Roy Wassili
+Project:  Yazz_NMEAtor_ESP32.cpp, Copyright 2020, Roy Wassili
   Contact:  waps61 @gmail.com
   URL:      https://www.hackster.io/waps61
-  VERSION:  0.10
+  VERSION:  1.0
   Date:     10-10-2020
   Last
-  Update:   26-04-2021
+  Update:   30-04-2021 V1.0
+            Released version
+            30-04-2021 V0.13
+            Tested version for input and output with all parameters to display
+            29-04-2021 V0.12
+            Beta version with display communication to Nextion NX4832K035
+            Not all parameters are show yet
+            26-04-2021 V0.11
+            Preparation for display implementation, compiled version and runnable
+            26-04-2021 V0.10
             First runnable MVP reading NMEA data,converting and sending NMEA0183 data
             18-04-2021 V0.02
-            Fixed a bug in tthe Depth calculation
+            Fixed a bug in the Depth calculation in the Arduino V1.04 that was inherited 
+            in this version. Aruino version updated to V1.05
             10-10-2020 V0.01
             Port to ESP32 from Arduino V1.04
             
@@ -35,10 +45,9 @@ Project:  Yazz_NMEAtor_ESP32.cpp, Copyright 2021, Roy Wassili
 
   
  
-  Serial is reserved for the MPU9250 communication
-  Rx2 (GPIO 16) is reserved for the NMEA listener on 4800Bd
-  GPIO 22 (and 23) are reserved for NMEA talker via
-  SoftSerial on 38400 Bd
+  Serial1 Rx1 (GPIO 18) and Tx1 (GPIO 19) are reserved for the NMEA listener on 4800Bd
+  Serial2 Rx2 (GPIO 16) and Tx2 (GPIO17) are reserved for communicating with the Nextion
+  GPIO 22 (and 23) are reserved for NMEA talker via SoftSerial on 38400 Bd
   
   Hardware setup:
 
@@ -48,7 +57,7 @@ Project:  Yazz_NMEAtor_ESP32.cpp, Copyright 2021, Roy Wassili
   This is used in my case.
   RS-232  | TTL shifter | ESP32
           | RS232 | TTL |
-    TX+   | +     | +   | GPIO 16
+    TX+   | +     | +   | GPIO 18
     GND   |       |     | GND
 
 Wiring Diagram (for RS-232 to NMEA0183 device)
@@ -57,7 +66,12 @@ Wiring Diagram (for RS-232 to NMEA0183 device)
      GND    |  RX - 
             |  GND (if isolated input available)
 
-
+Wiring Diagram (for ESP32 to Nextion display)
+  ESP32     | Nextion
+     Pin 16 |  TX +   
+     Pin 17 |  TX +   
+     GND    |  GND 
+      3,3V  |   5V
 
 
 ---------------
@@ -78,4 +92,4 @@ such as navigation at sea.
         
 TODO: 
 
-Credit: 
+Credit:  
