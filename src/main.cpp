@@ -114,7 +114,7 @@ Credit:
 // *** Conditional Debug & Test Info to Serial Monitor
 // *** by commenting out the line(s) below the debugger and or test statements will
 // *** be ommitted from the code
-#define DEBUG 1
+//#define DEBUG 1
 //#define TEST 1
 #define NEXTION_ATTACHED 1 //out comment if no display available
 
@@ -298,144 +298,7 @@ SoftwareSerial nmeaSerialOut; // // signal need to be inverted for RS-232
 #define BLACK 0x0000 /*   0,   0,   0 */
 int16_t current_color;
 
-#ifdef DISPLAY_ATTACHED
-/*
-TFT screen specific definitions go here
-*/
-#define YP A3 // must be an analog pin, use "An" notation!
-#define XM A2 // must be an analog pin, use "An" notation!
-#define YM 9  // can be a digital pin
-#define XP 8  // can be a digital pin
 
-//param calibration from kbv
-/*#define TS_MINX 298
-#define TS_MAXX 814
-
-#define TS_MINY 114 
-#define TS_MAXY 867
-*/
-#define TS_MINX 116
-#define TS_MAXX 906
-
-#define TS_MINY 92
-#define TS_MAXY 952
-
-// For better pressure precision, we need to know the resistance
-// between X+ and X- Use any multimeter to read it
-// For the one we're using, its 300 ohms across the X plate
-//touch sensitivity for press
-#define MINPRESSURE 10
-#define MAXPRESSURE 1000
-
-#define BLUE 0x001F        /*   0,   0, 255 */
-#define RED 0xF800         /* 255,   0,   0 */
-#define GREEN 0x07E0       /*   0, 255,   0 */
-#define CYAN 0x07FF        /*   0, 255, 255 */
-#define MAGENTA 0xF81F     /* 255,   0, 255 */
-#define YELLOW 0xFFE0      /* 255, 255,   0 */
-#define NAVY 0x000F        /*   0,   0, 128 */
-#define DARKGREEN 0x03E0   /*   0, 128,   0 */
-#define DARKCYAN 0x03EF    /*   0, 128, 128 */
-#define MAROON 0x7800      /* 128,   0,   0 */
-#define PURPLE 0x780F      /* 128,   0, 128 */
-#define OLIVE 0x7BE0       /* 128, 128,   0 */
-#define LIGHTGREY 0xC618   /* 192, 192, 192 */
-#define DARKGREY 0x7BEF    /* 128, 128, 128 */
-#define ORANGE 0xFD20      /* 255, 165,   0 */
-#define GREENYELLOW 0xAFE5 /* 173, 255,  47 */
-#define LOG_COLOR 0xFD20
-
-#define BUTTON_H 60  //button height
-#define BUTTON_W 110 //button wodth
-#define BUTTON_X 5   // x position of button column
-#define BUTTON_Y 260 // y position of button column
-
-//if the IC model is known or the modules is unreadable,you can use this constructed function
-LCDWIKI_KBV my_lcd(ILI9486, A3, A2, A1, A0, A4); //model,cs,cd,wr,rd,reset
-//if the IC model is not known and the modules is readable,you can use this constructed function
-//LCDWIKI_KBV my_lcd(320,480,A3,A2,A1,A0,A4);//width,height,cs,cd,wr,rd,reset
-
-TouchScreen ts = TouchScreen(XP, YP, XM, YM, 300);
-
-int16_t flag_colour;
-boolean show_flag = true;
-int16_t screen_row = 0;
-
-//*** Define the units of measurement in a string pointer array
-//*** and use an enum to get the index for the specific label
-//*** DEG is used for degrees and DEG< and DEG> for left and right indicators
-const char *screen_units[] = {"Kts", "NM", "DEG", "DEG<", "DEG>", "M", "C", "V"};
-enum units
-{
-  SPEED,
-  DIST,
-  DEG,
-  DEGR,
-  DEGL,
-  MTRS,
-  TEMP,
-  VOLT
-};
-//*** the screen is divided in 4 quadrants
-//***   Q1      Q2
-//***   Q3      Q4
-enum screen_quadrant
-{
-  Q1,
-  Q2,
-  Q3,
-  Q4
-};
-
-//*** a structure to hold the button info
-typedef struct
-{
-  char button_name[10];
-  uint8_t button_name_size; // the text size i.e. 1,2,...,n based on a 5x8 char
-  uint16_t button_name_colour;
-  uint16_t button_colour;
-  uint16_t button_x;
-  uint16_t button_y;
-} button_info;
-
-//*** define the buttons used with an enumerated tag
-enum menu_buttons
-{
-  SPD,
-  CRS,
-  LOG,
-  MEM
-};
-uint8_t active_menu_button = SPD; //holds the active menu button pressed
-//*** the definition of buttons menu
-button_info menu_button[4] =
-    {
-        "Speed",
-        3,
-        BLACK,
-        LIGHTGREY,
-        BUTTON_X,
-        BUTTON_Y,
-        "Crs",
-        3,
-        BLACK,
-        LIGHTGREY,
-        BUTTON_X + (1 * (BUTTON_W + BUTTON_X)),
-        BUTTON_Y,
-        "Log",
-        3,
-        BLACK,
-        LIGHTGREY,
-        BUTTON_X + (2 * (BUTTON_W + BUTTON_X)),
-        BUTTON_Y,
-        "Mem",
-        3,
-        BLACK,
-        LIGHTGREY,
-        BUTTON_X + (3 * (BUTTON_W + BUTTON_X)),
-        BUTTON_Y,
-};
-#endif
 // ----- software timer
 unsigned long Timer2 = 1000000; //500000L;                         // 500mS loop ... used when sending data to to Processing
 unsigned long Stop2 = 0;
@@ -479,14 +342,6 @@ void debugWrite(String debugMsg)
     Serial.println(debugMsg);
   else
     Serial.print(debugMsg);
-#else
-#ifdef DISPLAY_ATTACHED
-  int str_len = debugMsg.length();
-  char charMsg[str_len];
-  debugMsg.toCharArray(charMsg, str_len);
-  screen_println(charMsg, 2, flag_colour, BLACK, false);
-
-#endif
 #endif
 }
 
@@ -944,19 +799,10 @@ void displayData()
 
     if (strcmp(oldVal, _BITVAL) != 0)
     {
-      /*
-      dbSerial.print("Preparing NMEA data: clearing buffer:");
-      sendCommand("code_c");                     // clear the previous databuffer if present
-      recvRetCommandFinished(NEXTION_RCV_DELAY); // always wait for a reply from the HMI!
-*/
+      
       strcpy(oldVal, _BITVAL);
 
-      /*nexSerial.print("winddisplay.nmea.txt=");
-      nexSerial.print(_BITVAL);
-      nexSerial.write(0xFF);
-      nexSerial.write(0xFF);
-      nexSerial.write(0xFF);
-      */
+      
       dbSerial.print("Sending NMEA data: ");
       nmeaTxt.setText(_BITVAL);
       dbSerial.println(_BITVAL);
@@ -986,11 +832,10 @@ byte startTalking()
   if (NmeaStack.getIndex() > 0)
   {
     nmeaOut = NmeaStack.pop();
-    //outStr =nmeaOut.sentence;
+    
 
     for (int i = 0; i < (int)nmeaOut.sentence.length(); i++)
     {
-      //outChar[i]=outStr[i];
       nmeaSerialOut.write(nmeaOut.sentence[i]);
     }
 
@@ -1003,15 +848,13 @@ byte startTalking()
   // switch (active_menu_button)
   // {
 
-  // case SPEED:
+  
   // speeds are checked for values <100; Higher is non existant
   if (nmeaOut.fields[0] == _RMC)
   {
     memcpy(nb_SOG, &nmeaOut.fields[7], FIELD_BUFFER - 1);
 
-    /* tmpVal = nmeaOut.fields[7].toDouble();
-      if (tmpVal < 100)
-        update_display(tmpVal, screen_units[SPEED], "SOG", Q1); */
+    
   }
   if (nmeaOut.fields[0] == _VHW)
   {
@@ -1023,7 +866,6 @@ byte startTalking()
     memcpy(nb_AWA, &nmeaOut.fields[1], FIELD_BUFFER - 1);
     if (nmeaOut.fields[2] == "L")
     {
-      //update_display(tmpVal, screen_units[DEGL], "AWA", Q4);
       memmove(nb_AWA + 1, nb_AWA, FIELD_BUFFER - 2);
       nb_AWA[0] = '-';
     }
@@ -1177,7 +1019,7 @@ void decodeNMEAInput(char cIn)
 void startListening()
 {
 #ifdef DEBUG
-  //debugWrite("Listening....");
+  debugWrite("Listening....");
 #endif
 
   while (Serial1.available() > 0 && nmeaStatus != TERMINATING)
@@ -1207,21 +1049,6 @@ long softTimerNow;
 void runSoftGenerator()
 {
   softTimerNow = millis();
-  //if( softTimerNow - softTimerOld >250 ){
-  // if (on)
-  // {
-  //   digitalWrite(pin, LOW);
-  //   on = false;
-  //   //debugWrite("BLINKER: OFF");
-  //   // If the LED is off, turn it on and remember the state.
-  // }
-  // else
-  // {
-  //   digitalWrite(pin, HIGH);
-  //   on = true;
-  //   //Send output to Serial Monitor via debugger
-  //   //debugWrite("BLINKER: ON");
-  // }
 
   if (softIndex < 10)
   {
@@ -1233,8 +1060,7 @@ void runSoftGenerator()
   else
     softIndex = 0;
 
-  // }
-  // softTimerOld=softTimerNow;
+  
 }
 
 #endif
@@ -1242,7 +1068,7 @@ void runSoftGenerator()
 void setup()
 {
   // put your setup code here, to run once:
-  //Serial.begin(SAMPLERATE);
+  
 #ifdef NEXTION_ATTACHED
   if (nexInit())
   {
@@ -1264,7 +1090,7 @@ void setup()
   sendCommand("page 1");
   recvRetCommandFinished(NEXTION_RCV_DELAY);
 
-  // restet the HMI o default 0 values
+  // restet the HMI to default values
   memcpy(nb_AWA, "---", 4);
   memcpy(nb_COG, "---.-", 6);
   memcpy(nb_SOG, "--.-", 5);
@@ -1280,11 +1106,9 @@ void setup()
   displayData();
 #endif
 
-  //Serial.begin(115200);
   initializeListener();
   initializeTalker();
 
-  //Serial1.begin(4800, SERIAL_8N1, 16, 17, true);
   nmeaSerialOut.begin(38400, SWSERIAL_8N1, 22, TALKER_PORT, true);
 }
 
@@ -1303,9 +1127,6 @@ void loop()
 #endif
 
   startTalking();
-  /* while (Serial1.available())
-  {
-    Serial.print(char(Serial1.read()));
-  } */
+  
   displayData();
 }
