@@ -70,7 +70,7 @@ Wiring Diagram (for RS-232 to NMEA0183 device)
 Wiring Diagram (for ESP32 to Nextion display)
   ESP32     | Nextion
      Pin 16 |  TX +   
-     Pin 17 |  TX +   
+     Pin 17 |  RX +   
      GND    |  GND 
       3,3V  |   5V
 
@@ -297,7 +297,6 @@ SoftwareSerial nmeaSerialOut; // // signal need to be inverted for RS-232
 #define WHITE 0xFFFF /* 255, 255, 255 */
 #define BLACK 0x0000 /*   0,   0,   0 */
 int16_t current_color;
-
 
 // ----- software timer
 unsigned long Timer2 = 1000000; //500000L;                         // 500mS loop ... used when sending data to to Processing
@@ -799,10 +798,9 @@ void displayData()
 
     if (strcmp(oldVal, _BITVAL) != 0)
     {
-      
+
       strcpy(oldVal, _BITVAL);
 
-      
       dbSerial.print("Sending NMEA data: ");
       nmeaTxt.setText(_BITVAL);
       dbSerial.println(_BITVAL);
@@ -832,7 +830,6 @@ byte startTalking()
   if (NmeaStack.getIndex() > 0)
   {
     nmeaOut = NmeaStack.pop();
-    
 
     for (int i = 0; i < (int)nmeaOut.sentence.length(); i++)
     {
@@ -848,13 +845,10 @@ byte startTalking()
   // switch (active_menu_button)
   // {
 
-  
   // speeds are checked for values <100; Higher is non existant
   if (nmeaOut.fields[0] == _RMC)
   {
     memcpy(nb_SOG, &nmeaOut.fields[7], FIELD_BUFFER - 1);
-
-    
   }
   if (nmeaOut.fields[0] == _VHW)
   {
@@ -883,7 +877,6 @@ byte startTalking()
     memcpy(nb_DPT, &nmeaOut.fields[1], FIELD_BUFFER - 1);
   }
 
-  
   if (nmeaOut.fields[0] == _xDR)
   {
     if (nmeaOut.fields[4] == "BATT")
@@ -1059,8 +1052,6 @@ void runSoftGenerator()
   }
   else
     softIndex = 0;
-
-  
 }
 
 #endif
@@ -1068,7 +1059,7 @@ void runSoftGenerator()
 void setup()
 {
   // put your setup code here, to run once:
-  
+
 #ifdef NEXTION_ATTACHED
   if (nexInit())
   {
@@ -1127,6 +1118,6 @@ void loop()
 #endif
 
   startTalking();
-  
+
   displayData();
 }
